@@ -1,0 +1,1 @@
+In this part, several RNN models are tried to learn from a text corpus which contains the comments from the StarMaker app so that the computer can automatically generate comments by a given first word. 

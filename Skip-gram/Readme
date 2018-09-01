@@ -1,0 +1,1 @@
+Using Python with TensorFlow to obtain word embedding matrix from a text corpus which comes from the comments in the StarMaker app. In order to test the model, we get the top 8 most similar words for each test word from the trained embedding matrix. And the result shows that the model performs well.

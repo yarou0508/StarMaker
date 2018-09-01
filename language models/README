@@ -1,1 +1,7 @@
 In this part, several RNN models are tried to learn from a text corpus which contains the comments from the StarMaker app so that the computer can automatically generate comments by a given first word. 
+
+In LSTM model, when you feed the original data into the model, it can only learn from beginning to the end. Therefore, at each step, the model cannot learn the information from the words behind it. However, Bi-LSTM model learn the original data once from beginning to the end and once from end to beginning. It seems to obtain more information. However, in our model, we generate the new sentence words by words in one direction, which makes the Bi-LSTM unnecessary. And the results show that LSTM works much better than Bi-LSTM here.
+
+LSTM-with word embedding model use pretrained word embedding matrix from the skip-gram model. And this method helps to speep up the learning process without reducing accuracy.
+
+GAN is a fairly new technology, especially in NLP field. I tried this algorithm here, but it cost too long to converge. Because it costs huge time and computation resources for the two parts, the generate part and the discriminate part, to both converge in the end.

@@ -1,4 +1,4 @@
-In this part, two models are generated to obtain word embedding matrix from a text corpus which is the users' comments in the StarMaker app. 
-One is the skip-gram model with negative sampling, and the other one is to train the embedding matrix in an LSTM model. 
+In this part, three models are generated to obtain word embedding matrix from a text corpus which is the users' comments in the StarMaker app. 
+One is the skip-gram model with negative sampling, the second one is to train the embedding matrix in an LSTM model and the third one is the matrix factorization method. 
 In order to test the model, we print out the top 8 most similar words for each test word. The similarity is computed by the coveriance of the trained word embedding matrixs. 
-And the result shows that skip-gram model performs much better than the LSTM method.
+And the result shows that skip-gram model performs much better than the LSTM and matrix factorization methods.

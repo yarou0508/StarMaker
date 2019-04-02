@@ -16,9 +16,9 @@ from tqdm import tqdm
 import time
 import sys
 
-#%% ===================================处理数据 ============================= 
+#%% ===================================Clean data ============================= 
 def get_data(num):
-    file = "comment-%s"
+    file = "./gpu/comment-%s"
     with open(file % num, encoding='utf8', mode='r') as rfile:
         words = []
         sentences = []
@@ -33,7 +33,7 @@ def get_data(num):
             line = re.sub('[\=\s+\.\!\?\;\,\/\\\_\。\$\%^*(+\"\:\-\@\#\&\|\[\]\<\>)]+', " ", line)
             line = re.sub('\d{10}', " ", line)
             sentence =  regex.sub(r'\p{So}\p{Sk}*', repl, line)
-            word = sentence.split()                        
+            word = sentence.split()          
             if len(word) > 1:
                 if "'" in word:
                     word.remove("'")
@@ -51,25 +51,22 @@ def get_data(num):
     word_bank = list(words_sort.index)
     del words_sort
     #word_bank = list(set(words))
-    word2id = {}  # word => id 的映射
+    word2id = {}  # convert word => id
     for i in range(len(word_bank)):
         word2id[word_bank[i]] = i+1 
-    word2id['!'] = len(word_bank)+1 # Word2id中增加‘EOS'
-    word2id['$'] = len(word_bank)+2
+    word2id['!'] = len(word_bank)+1 # add 'EOS' to Word2id
     del word_bank
-    inputs = []  
-    for sent in sentences: # 输入是多个句子，这里每个循环处理一个句子
-        input_sent = [len(word2id)]
-        for i in range(sent.__len__()):  # 处理单个句子中的每个单词
+    inputs = []   
+    for sent in sentences: # Loop to process sentence by sentence
+        input_sent = []
+        for i in range(sent.__len__()):  # Loop to process word by word in one sentence
             input_id = word2id.get(sent[i])
-            if not input_id:  # 如果单词不在词典中，则跳过
+            if not input_id:  
                 continue
             input_sent.append(input_id)
-        input_sent.append(len(word2id)-1) # 每个句子末尾添加'EOS'
-        if len(input_sent) > 22:
-            input_sent = input_sent[:22]
-            #input_sent = [input_sent[i:i+20] for i in range(0,len(input_sent),20)]
-            #inputs.extend(input_sent)
+        input_sent.append(len(word2id)) # add 'EOS' to the end of a sentence
+        if len(input_sent) > 21:
+            input_sent = input_sent[:21]
             inputs.append(input_sent)
         elif len(input_sent) < 3:
             continue
@@ -92,7 +89,7 @@ class TrainData:
         start_pos = batch * self.batch_size
         end_pos = min((batch + 1) * self.batch_size, self.n)
         xdata = self.inputs[start_pos:end_pos]
-        # target data 左移一位
+        # rotating the input sentence once to the left to generate the target sentence
         ydata = copy.deepcopy(self.inputs[start_pos:end_pos])
         for row in ydata:
             row.pop(0)
@@ -105,19 +102,19 @@ class TrainData:
 
 def build_output_g(lstm_output, hidden_dim, softmax_w, softmax_b):
     outputs = tf.reshape(tf.concat(lstm_output,1), [-1, hidden_dim])      
-    # 将lstm层与softmax层全连接,计算logits
+    # Compute probabilities by sorfmax activation function
     logits = tf.matmul(outputs, softmax_w) + softmax_b    
-    # softmax层返回概率分布
     preds = tf.nn.softmax(logits, name='predictions')   
     return preds
 
 def build_output_d(lstm_output, hidden_dim, sigmoid_w, sigmoid_b):
     outputs = tf.reshape(tf.concat(lstm_output,1), [-1, hidden_dim])      
-    # 将lstm层与softmax层全连接,计算logits
+    # Compute 
     logits = tf.matmul(outputs, sigmoid_w) + sigmoid_b    
-    return logits
+    preds = tf.nn.softmax(logits, name='predictions')   
+    return preds
 
-#%% ===================================GAN 模型 ============================= 
+#%% ===================================GAN model ============================= 
 class GAN:    
     def __init__(self, vocab_size, batch_size,
                  num_batches, num_steps, hidden_dim=64, 
@@ -141,10 +138,10 @@ class GAN:
         self.config.allow_soft_placement = True            
         tf.reset_default_graph()  
         
-# 输入层
+        # Initialize the input and target data using placeholder
         self.inputs = tf.placeholder(tf.int32, shape=[None, self.num_steps], name='inputs')
         self.targets = tf.placeholder(tf.int32, shape=[None, self.num_steps], name='targets')
-        # 创建softmax weight 和 bias
+        # Initialize weight matirx and bias for the softmax
         with tf.variable_scope('softmax'):
             self.softmax_w1 = tf.get_variable("softmax_w1", shape = [self.hidden_dim, self.vocab_size], 
                                              regularizer=tf.contrib.layers.l2_regularizer(scale=self.lambd / self.num_batches), 
@@ -159,21 +156,21 @@ class GAN:
         W = tf.get_variable("word_embedding", shape=[self.vocab_size, self.hidden_dim],trainable=False)
         self.embedding = tf.placeholder(tf.float32, shape=[self.vocab_size, self.hidden_dim], name='embedding')
         self.embedding_init = tf.assign(W, self.embedding)
-        # 对输入进行one-hot编码         
+        # # lookup the specific intput in the embedding matrix            
         self.inputs_emb = tf.nn.embedding_lookup(W, self.inputs)
         self.inputs_emb_unstack = tf.unstack(self.inputs_emb, self.num_steps, 1)  
 
         with tf.variable_scope("LSTM_g"):
             # Train contents
             self.lstm_cell_train = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_dim, forget_bias=1.0, state_is_tuple=True)  
-            # 添加dropout
+            # add dropout
             if train == True:
                 self.lstm_cell = tf.nn.rnn_cell.DropoutWrapper(self.lstm_cell_train, output_keep_prob=(1 - self.dropout_rate))
-            # 堆叠
+            # stack several lstm layers 
             self.lstm_cell_train= tf.nn.rnn_cell.MultiRNNCell([self.lstm_cell_train] * self.num_layers, state_is_tuple=True)
             self.initial_state_train = self.lstm_cell_train.zero_state(self.batch_size, tf.float32) 
             
-            # 运行RNN
+            # Run the lstm model
             self.outputs_train, self.final_state_train = rnn.static_rnn(self.lstm_cell_train, self.inputs_emb_unstack, 
                          initial_state = self.initial_state_train, dtype=tf.float32)                
             # softmax prediction probability
@@ -183,9 +180,9 @@ class GAN:
             self.fake_emb = tf.nn.embedding_lookup(W, self.fake)
         
         with tf.variable_scope("RNN_d"):
-#            # 堆叠LSTM层方法一
+#            # One way to stack several layers 
 #            self.lstm_cell_dis = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_dim, forget_bias=1.0, state_is_tuple=True)  
-#        # 添加dropout
+#            # add dropout
 #            if train == True:
 #                self.lstm_cell_dis = tf.nn.rnn_cell.DropoutWrapper(self.lstm_cell_dis, output_keep_prob=(1 - self.dropout_rate))
 #            self.lstm_cell_dis= tf.nn.rnn_cell.MultiRNNCell([self.lstm_cell_dis] * self.num_layers, state_is_tuple=True)
@@ -197,7 +194,7 @@ class GAN:
 #                logits = build_output_d(outputs[:,-1,:], self.hidden_dim, self.sigmoid_w1, self.sigmoid_b1)
 #                
 #                return logits, final_state
-            # 堆叠LSTM层方法二
+            # Second way to stack several lstm layers
             stack_rnn = []
             for i in range(3):
                 stack_rnn.append(tf.contrib.rnn.BasicLSTMCell(self.hidden_dim, state_is_tuple=True))
@@ -222,7 +219,7 @@ class GAN:
             self.d_loss = self.d_loss_real + self.d_loss_fake     
             self.optimizer_d = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.d_loss)
  
-#%% ===================================训练数据 =============================            
+#%% ===================================Train the model=============================            
 if __name__ == "__main__":
     num = str(sys.argv[1])
     k = sys.argv[2]
@@ -260,61 +257,61 @@ if __name__ == "__main__":
                 step += 1
                 if step % 100 == 0:
                     saver.save(sess, './comments_model/GAN/%s/' % num, global_step=step)
-                    #if step % 10000 == 0:
-                        #print(step)
+                    if step % 10000 == 0:
+                        print(step)
             print('G and D Loss at step {}: {:5.6f}, {:5.6f}'.format(index+1, total_loss_d / num_batches, total_loss_g / num_batches))
     endtime = time.time()  
     print(endtime - starttime) 
 
-#%% ===================================生成句子 ============================= 
-def pick_top_n(preds, vocab_size, iter, top_n=10):
-    # 从预测结果中选取前top_n个最可能的字符
+#%% ===================================Generate sentences ============================= 
+def pick_top_n(preds, vocab_size, iter, top_n=3):
+    # Pick the top n words from predictions using the trained word embedding 
     p = np.squeeze(preds)
-    #p1 = list(p)
-    #c = p1.index(max(p1))
     if iter <= 3:
-        p = p[1:-2]
-    # 将除了top_n个预测值的位置都置为0
-        p[np.argsort(p)[:-top_n]] = 0
-    # 归一化概率
-        p = p / np.sum(p)
-    # 随机选取一个字符
-        c = np.random.choice(vocab_size-3, 1, p=p)[0]+1
-    else:
         p = p[1:-1]
-    # 将除了top_n个预测值的位置都置为0
+    # Re-compute the probabilities
+    # Set the non-top n probabilities to 0
         p[np.argsort(p)[:-top_n]] = 0
-    # 归一化概率
+    # Normalize them
         p = p / np.sum(p)
-    # 随机选取一个字符
+    # Random select from the top n words based on their nomalized probabilities
         c = np.random.choice(vocab_size-2, 1, p=p)[0]+1
+    else:
+        p = p[1:]
+    # Re-compute the probabilities
+    # Set the non-top n probabilities to 0
+        p[np.argsort(p)[:-top_n]] = 0
+    # Normalize them
+        p = p / np.sum(p)
+    # Random select from the top n words based on their nomalized probabilities
+        c = np.random.choice(vocab_size-1, 1, p=p)[0]+1
     return c
         
 def sample(n_words, vocab_size, batch_size, num_batches, sen_length, prime, num):
-    #prime: 起始文本    
-    samples=[]
-    # sampling=True意味着batch的size=1 x 1
-    model = GAN(vocab_size, batch_size, num_batches, sen_length, train=False)
+    #prime is the start word
+    samples=[prime]
+    # sampling=True means that batch size=1 x 1
+    model = GAN(vocab_size, batch_size, num_batches, sen_length, sampling=True)
     saver = tf.train.Saver()
     with tf.Session(config = model.config) as sess:
-        # 加载模型参数，恢复训练
+        # Load precious model parameters
         checkpoint_file = tf.train.latest_checkpoint('./comments_model/GAN/%s' % num)
         saver.restore(sess, checkpoint_file)
-        new_state_train = sess.run([model.initial_state_train])        
-        # 不断生成字符，直到达到指定数目
+        new_state = sess.run([model.initial_state])
+        # generate words one by one to form a sentence until it get the 'EOS'
         c = word2id.get(prime)
         for i in range(n_words):
             test_word_id = c
-            if test_word_id == word2id.get('!'):
+            if test_word_id == word2id.get('EOS'):
                 break
             else:
                 feed = {model.inputs: [[test_word_id]],
-                        model.initial_state_train: new_state_train}
-                preds, new_state_train = sess.run([model.prediction_train, model.final_state_train], feed_dict=feed)
+                        model.initial_state: new_state}
+                preds, new_state = sess.run([model.prediction, model.final_state], feed_dict=feed)
                 c = pick_top_n(preds, vocab_size, i)
                 while c == test_word_id:
-                    c = pick_top_n(preds, vocab_size, i)   
-                samples.extend(x for x,v in word2id.items() if v==c)      
+                    c = pick_top_n(preds, vocab_size, i)
+                samples.extend(x for x,v in word2id.items() if v==c)
     print(' '.join(samples))
     
 if __name__ == "__main__":
@@ -323,9 +320,7 @@ if __name__ == "__main__":
     batch_size = 30
     train_data = TrainData(inputs, batch_size, sen_length) #inputs, batch_size, sen_length
     print('Train size: %s' % (train_data.get_num_batches()*batch_size))
-    # Train size: 795392
-    print('Vocab_size: %s' % vocab_size)  
-    # Vocab_size: 81685            
+    print('Vocab_size: %s' % vocab_size)            
     num_batches = train_data.get_num_batches()    
     for i in range(10):  
         #sample(10, vocab_size, batch_size, num_batches, prime = "you")
